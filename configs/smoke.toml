@@ -1,0 +1,43 @@
+data_root = "/Users/simonechierichini/Documents/Codex/LST-AT/data/Monthly"
+output_dir = "runs/smoke"
+seed = 42
+
+[split]
+train_years = [2024]
+val_years = [2025]
+test_years = []
+
+[data]
+include_mask_channel = true
+include_time_channels = true
+apply_modis_correction = true
+lst_mean = 25.0
+lst_std = 15.0
+tair_mean = 20.0
+tair_std = 12.0
+
+[model]
+base_channels = 8
+depth = 2
+dropout = 0.0
+
+[training]
+epochs = 1
+batch_size = 4
+learning_rate = 0.001
+weight_decay = 0.0001
+loss = "huber"
+min_pad_size = 32
+pad_multiple = 8
+num_workers = 0
+device = "cpu"
+max_train_examples = 16
+max_val_examples = 8
+
+[wandb]
+enabled = false
+project = "lst-at"
+entity = ""
+mode = "disabled"
+run_name = "smoke"
+watch_model = false

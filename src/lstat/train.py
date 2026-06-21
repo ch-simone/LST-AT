@@ -38,6 +38,16 @@ def train(config: dict, config_path: str | Path) -> None:
     data_cfg = config["data"]
     train_examples = build_examples(data_root, years=config["split"]["train_years"])
     val_examples = build_examples(data_root, years=config["split"]["val_years"])
+    train_examples = _limit_examples(
+        train_examples,
+        config["training"].get("max_train_examples", 0),
+        seed,
+    )
+    val_examples = _limit_examples(
+        val_examples,
+        config["training"].get("max_val_examples", 0),
+        seed + 1,
+    )
     print(f"train examples: {len(train_examples)}")
     print(f"val examples:   {len(val_examples)}")
 
@@ -228,6 +238,15 @@ def _seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
+
+def _limit_examples(examples: list, limit: int, seed: int) -> list:
+    limit = int(limit or 0)
+    if limit <= 0 or limit >= len(examples):
+        return examples
+    rng = random.Random(seed)
+    indices = sorted(rng.sample(range(len(examples)), limit))
+    return [examples[index] for index in indices]
 
 
 def _init_wandb(

@@ -67,6 +67,14 @@ python scripts/inspect_dataset.py --config configs/default.toml
 
 ## Train
 
+Quick smoke run:
+
+```bash
+python -m lstat.train --config configs/smoke.toml
+```
+
+Full configured run:
+
 ```bash
 python -m lstat.train --config configs/default.toml
 ```
