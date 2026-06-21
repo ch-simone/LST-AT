@@ -139,6 +139,7 @@ def train(config: dict, config_path: str | Path) -> None:
             f"val_loss={val_metrics['loss']:.4f} "
             f"val_mae_c={val_metrics['mae_c']:.3f} "
             f"val_rmse_c={val_metrics['rmse_c']:.3f} "
+            f"val_r2={val_metrics['r2']:.4f} "
             f"seconds={epoch_seconds:.1f}"
         )
         _wandb_log(
@@ -149,6 +150,7 @@ def train(config: dict, config_path: str | Path) -> None:
                 "val/loss": val_metrics["loss"],
                 "val/mae_c": val_metrics["mae_c"],
                 "val/rmse_c": val_metrics["rmse_c"],
+                "val/r2": val_metrics["r2"],
                 "train/epoch_seconds": epoch_seconds,
                 "train/learning_rate": optimizer.param_groups[0]["lr"],
             },
@@ -196,7 +198,14 @@ def _run_epoch(model, loader, optimizer, device, loss_name: str, target_std: flo
 @torch.no_grad()
 def _evaluate(model, loader, device, loss_name: str, target_std: float) -> dict[str, float]:
     model.eval()
-    totals = {"loss": 0.0, "abs_c": 0.0, "sq_c": 0.0, "pixels": 0.0}
+    totals = {
+        "loss": 0.0,
+        "abs_c": 0.0,
+        "sq_c": 0.0,
+        "target_sum_c": 0.0,
+        "target_sq_sum_c": 0.0,
+        "pixels": 0.0,
+    }
     for batch in loader:
         x = batch["x"].to(device)
         y = batch["y"].to(device)
@@ -204,15 +213,22 @@ def _evaluate(model, loader, device, loss_name: str, target_std: float) -> dict[
         pred = model(x)
         pixels = mask.sum().item()
         diff_c = (pred - y) * target_std
+        y_c = y * target_std
         totals["loss"] += _loss(pred, y, mask, loss_name).item() * pixels
         totals["abs_c"] += (diff_c.abs() * mask).sum().item()
         totals["sq_c"] += ((diff_c**2) * mask).sum().item()
+        totals["target_sum_c"] += (y_c * mask).sum().item()
+        totals["target_sq_sum_c"] += ((y_c**2) * mask).sum().item()
         totals["pixels"] += pixels
     pixels = max(totals["pixels"], 1.0)
+    target_mean_c = totals["target_sum_c"] / pixels
+    target_ss_tot_c = totals["target_sq_sum_c"] - pixels * target_mean_c**2
+    r2 = 1.0 - totals["sq_c"] / target_ss_tot_c if target_ss_tot_c > 0 else float("nan")
     return {
         "loss": totals["loss"] / pixels,
         "mae_c": totals["abs_c"] / pixels,
         "rmse_c": (totals["sq_c"] / pixels) ** 0.5,
+        "r2": r2,
     }
 
 
