@@ -13,10 +13,12 @@ def pad_collate(batch: list[dict], min_size: int = 32, multiple: int = 8) -> dic
     out_w = _round_up(max(max_w, min_size), multiple)
 
     xs, ys, masks = [], [], []
+    shapes = []
     for item in batch:
         x = torch.from_numpy(item["x"])
         y = torch.from_numpy(item["y"])
         mask = torch.from_numpy(item["mask"])
+        shapes.append((x.shape[-2], x.shape[-1]))
         pad = (0, out_w - x.shape[-1], 0, out_h - x.shape[-2])
         xs.append(F.pad(x, pad))
         ys.append(F.pad(y, pad))
@@ -26,6 +28,7 @@ def pad_collate(batch: list[dict], min_size: int = 32, multiple: int = 8) -> dic
         "x": torch.stack(xs),
         "y": torch.stack(ys),
         "mask": torch.stack(masks),
+        "shape": torch.tensor(shapes, dtype=torch.long),
         "city": [item["city"] for item in batch],
         "year": torch.tensor([item["year"] for item in batch]),
         "month": torch.tensor([item["month"] for item in batch]),

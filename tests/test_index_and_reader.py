@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from lstat.collate import pad_collate
+from lstat.dataset import LstatDataset, Normalization
 from lstat.geotiff import read_geotiff
 from lstat.index import build_examples, build_pairs
 
@@ -34,3 +36,15 @@ def test_read_sample_pair_shapes_match():
     assert era5.array.shape == (12, 20, 2)
     assert modis.valid_mask[:, :, 0].sum() > 0
     assert era5.valid_mask[:, :, 0].sum() > 0
+
+
+def test_collate_keeps_original_shapes():
+    examples = [
+        example
+        for example in build_examples(DATA_ROOT, years=[2024])
+        if example.city == "Rome" and example.month == 10
+    ][:2]
+    dataset = LstatDataset(examples, Normalization())
+    batch = pad_collate([dataset[0], dataset[1]], min_size=32, multiple=8)
+    assert tuple(batch["x"].shape) == (2, 5, 32, 32)
+    assert batch["shape"].tolist() == [[12, 20], [12, 20]]

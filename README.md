@@ -94,6 +94,10 @@ Validation residual images are logged at epoch 1, every
 target AT - predicted AT
 ```
 
+Image examples are selected by valid-pixel coverage when
+`[evaluation].image_selection = "most_valid"`, and visualizations are cropped
+back to the original raster size before logging.
+
 ## Notes
 
 The MODIS values in this dataset appear to have been stored after a double

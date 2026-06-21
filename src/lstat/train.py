@@ -329,47 +329,67 @@ def _log_eval_images(
     eval_cfg = config.get("evaluation", {})
     max_examples = int(eval_cfg.get("num_image_examples", 4))
     residual_limit = float(eval_cfg.get("residual_heatmap_limit_c", 10.0))
-    batch = next(iter(loader))
-    x = batch["x"].to(device)
-    y = batch["y"].to(device)
-    mask = batch["mask"].to(device)
-
+    image_selection = eval_cfg.get("image_selection", "most_valid")
+    max_batches = int(eval_cfg.get("max_image_batches", 0))
     model.eval()
-    pred = model(x)
+    records = []
+    for batch_index, batch in enumerate(loader):
+        if max_batches > 0 and batch_index >= max_batches:
+            break
+        x = batch["x"].to(device)
+        y = batch["y"].to(device)
+        mask = batch["mask"].to(device)
+        pred = model(x)
 
-    x_lst_c = x[:, 0:1] * normalization.lst_std + normalization.lst_mean
-    y_c = y * normalization.tair_std + normalization.tair_mean
-    pred_c = pred * normalization.tair_std + normalization.tair_mean
-    residual_c = y_c - pred_c
+        x_lst_c = x[:, 0:1] * normalization.lst_std + normalization.lst_mean
+        y_c = y * normalization.tair_std + normalization.tair_mean
+        pred_c = pred * normalization.tair_std + normalization.tair_mean
+        residual_c = y_c - pred_c
+
+        count = x.shape[0]
+        for index in range(count):
+            height, width = [int(v) for v in batch["shape"][index].tolist()]
+            valid_mask = mask[index, 0, :height, :width].detach().cpu().numpy() > 0
+            coverage = float(valid_mask.mean()) if valid_mask.size else 0.0
+            if coverage <= 0:
+                continue
+            city = batch["city"][index]
+            year = int(batch["year"][index])
+            month = int(batch["month"][index])
+            phase = batch["phase"][index]
+            caption_prefix = f"{city} {year}-{month:02d} {phase}"
+            record = {
+                "coverage": coverage,
+                "caption_prefix": caption_prefix,
+                "lst": x_lst_c[index, 0, :height, :width].detach().cpu().numpy(),
+                "target": y_c[index, 0, :height, :width].detach().cpu().numpy(),
+                "pred": pred_c[index, 0, :height, :width].detach().cpu().numpy(),
+                "residual": residual_c[index, 0, :height, :width].detach().cpu().numpy(),
+                "mask": valid_mask,
+            }
+            records.append(record)
+            if image_selection != "most_valid" and len(records) >= max_examples:
+                break
+        if image_selection != "most_valid" and len(records) >= max_examples:
+            break
+
+    if image_selection == "most_valid":
+        records = sorted(records, key=lambda item: item["coverage"], reverse=True)
+    records = records[:max_examples]
 
     images = []
-    count = min(max_examples, x.shape[0])
-    for index in range(count):
-        valid_mask = mask[index, 0].detach().cpu().numpy() > 0
-        city = batch["city"][index]
-        year = int(batch["year"][index])
-        month = int(batch["month"][index])
-        phase = batch["phase"][index]
-        caption_prefix = f"{city} {year}-{month:02d} {phase}"
-
-        lst_img = _scalar_map_to_rgb(
-            x_lst_c[index, 0].detach().cpu().numpy(),
-            valid_mask,
-        )
-        target_img = _scalar_map_to_rgb(
-            y_c[index, 0].detach().cpu().numpy(),
-            valid_mask,
-        )
-        pred_img = _scalar_map_to_rgb(
-            pred_c[index, 0].detach().cpu().numpy(),
-            valid_mask,
-        )
+    for record in records:
+        valid_mask = record["mask"]
+        coverage_pct = record["coverage"] * 100.0
+        caption_prefix = f"{record['caption_prefix']} | valid={coverage_pct:.1f}%"
+        lst_img = _scalar_map_to_rgb(record["lst"], valid_mask)
+        target_img = _scalar_map_to_rgb(record["target"], valid_mask)
+        pred_img = _scalar_map_to_rgb(record["pred"], valid_mask)
         residual_img = _residual_map_to_rgb(
-            residual_c[index, 0].detach().cpu().numpy(),
+            record["residual"],
             valid_mask,
             limit=residual_limit,
         )
-
         images.extend(
             [
                 wandb.Image(lst_img, caption=f"{caption_prefix} | input LST C"),
@@ -385,7 +405,8 @@ def _log_eval_images(
             ]
         )
 
-    wandb_run.log({"eval/maps": images, "epoch": epoch})
+    if images:
+        wandb_run.log({"eval/maps": images, "epoch": epoch})
 
 
 def _scalar_map_to_rgb(values: np.ndarray, mask: np.ndarray) -> np.ndarray:

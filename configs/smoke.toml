@@ -38,6 +38,8 @@ max_val_examples = 8
 log_image_interval = 1
 num_image_examples = 2
 residual_heatmap_limit_c = 10.0
+image_selection = "most_valid"
+max_image_batches = 0
 
 [wandb]
 enabled = false
