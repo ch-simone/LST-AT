@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from functools import partial
+import json
 from pathlib import Path
 import random
 import time
@@ -120,8 +121,10 @@ def train(config: dict, config_path: str | Path) -> None:
     )
     best_val = float("inf")
     loss_name = config["training"].get("loss", "huber")
+    total_epochs = int(config["training"]["epochs"])
+    final_val_metrics = {}
 
-    for epoch in range(1, int(config["training"]["epochs"]) + 1):
+    for epoch in range(1, total_epochs + 1):
         start_time = time.time()
         train_loss = _run_epoch(
             model,
@@ -155,6 +158,16 @@ def train(config: dict, config_path: str | Path) -> None:
                 "train/learning_rate": optimizer.param_groups[0]["lr"],
             },
         )
+        if _should_log_eval_images(config, epoch, total_epochs):
+            _log_eval_images(
+                wandb_run=wandb_run,
+                model=model,
+                loader=val_loader,
+                device=device,
+                normalization=normalization,
+                config=config,
+                epoch=epoch,
+            )
         if val_metrics["mae_c"] < best_val:
             best_val = val_metrics["mae_c"]
             checkpoint_path = output_dir / "best.pt"
@@ -173,6 +186,29 @@ def train(config: dict, config_path: str | Path) -> None:
             )
             _wandb_save(wandb_run, checkpoint_path)
 
+        final_val_metrics = val_metrics
+
+    final_metrics = {
+        "best_val_mae_c": best_val,
+        "final_val_loss": final_val_metrics.get("loss"),
+        "final_val_mae_c": final_val_metrics.get("mae_c"),
+        "final_val_rmse_c": final_val_metrics.get("rmse_c"),
+        "final_val_r2": final_val_metrics.get("r2"),
+    }
+    (output_dir / "final_metrics.json").write_text(
+        json.dumps(final_metrics, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    _wandb_log(
+        wandb_run,
+        {
+            "final/best_val_mae_c": final_metrics["best_val_mae_c"],
+            "final/val_loss": final_metrics["final_val_loss"],
+            "final/val_mae_c": final_metrics["final_val_mae_c"],
+            "final/val_rmse_c": final_metrics["final_val_rmse_c"],
+            "final/val_r2": final_metrics["final_val_r2"],
+        },
+    )
     _wandb_finish(wandb_run)
 
 
@@ -263,6 +299,130 @@ def _limit_examples(examples: list, limit: int, seed: int) -> list:
     rng = random.Random(seed)
     indices = sorted(rng.sample(range(len(examples)), limit))
     return [examples[index] for index in indices]
+
+
+def _should_log_eval_images(config: dict, epoch: int, total_epochs: int) -> bool:
+    interval = int(config.get("evaluation", {}).get("log_image_interval", 0))
+    if interval <= 0:
+        return False
+    return epoch == 1 or epoch == total_epochs or epoch % interval == 0
+
+
+@torch.no_grad()
+def _log_eval_images(
+    wandb_run,
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    normalization: Normalization,
+    config: dict,
+    epoch: int,
+) -> None:
+    if wandb_run is None:
+        return
+
+    try:
+        import wandb
+    except ImportError:
+        return
+
+    eval_cfg = config.get("evaluation", {})
+    max_examples = int(eval_cfg.get("num_image_examples", 4))
+    residual_limit = float(eval_cfg.get("residual_heatmap_limit_c", 10.0))
+    batch = next(iter(loader))
+    x = batch["x"].to(device)
+    y = batch["y"].to(device)
+    mask = batch["mask"].to(device)
+
+    model.eval()
+    pred = model(x)
+
+    x_lst_c = x[:, 0:1] * normalization.lst_std + normalization.lst_mean
+    y_c = y * normalization.tair_std + normalization.tair_mean
+    pred_c = pred * normalization.tair_std + normalization.tair_mean
+    residual_c = y_c - pred_c
+
+    images = []
+    count = min(max_examples, x.shape[0])
+    for index in range(count):
+        valid_mask = mask[index, 0].detach().cpu().numpy() > 0
+        city = batch["city"][index]
+        year = int(batch["year"][index])
+        month = int(batch["month"][index])
+        phase = batch["phase"][index]
+        caption_prefix = f"{city} {year}-{month:02d} {phase}"
+
+        lst_img = _scalar_map_to_rgb(
+            x_lst_c[index, 0].detach().cpu().numpy(),
+            valid_mask,
+        )
+        target_img = _scalar_map_to_rgb(
+            y_c[index, 0].detach().cpu().numpy(),
+            valid_mask,
+        )
+        pred_img = _scalar_map_to_rgb(
+            pred_c[index, 0].detach().cpu().numpy(),
+            valid_mask,
+        )
+        residual_img = _residual_map_to_rgb(
+            residual_c[index, 0].detach().cpu().numpy(),
+            valid_mask,
+            limit=residual_limit,
+        )
+
+        images.extend(
+            [
+                wandb.Image(lst_img, caption=f"{caption_prefix} | input LST C"),
+                wandb.Image(target_img, caption=f"{caption_prefix} | target AT C"),
+                wandb.Image(pred_img, caption=f"{caption_prefix} | predicted AT C"),
+                wandb.Image(
+                    residual_img,
+                    caption=(
+                        f"{caption_prefix} | residual target-pred C "
+                        f"[-{residual_limit:g}, {residual_limit:g}]"
+                    ),
+                ),
+            ]
+        )
+
+    wandb_run.log({"eval/maps": images, "epoch": epoch})
+
+
+def _scalar_map_to_rgb(values: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    scaled = _robust_scale(values, mask)
+    gray = (scaled * 255).astype("uint8")
+    rgb = np.stack([gray, gray, gray], axis=-1)
+    rgb[~mask] = np.array([40, 40, 40], dtype="uint8")
+    return rgb
+
+
+def _residual_map_to_rgb(values: np.ndarray, mask: np.ndarray, limit: float) -> np.ndarray:
+    limit = max(float(limit), 1e-6)
+    scaled = np.clip(values / limit, -1.0, 1.0)
+    red = np.full(values.shape, 255.0, dtype="float32")
+    green = np.full(values.shape, 255.0, dtype="float32")
+    blue = np.full(values.shape, 255.0, dtype="float32")
+
+    positive = np.clip(scaled, 0.0, 1.0)
+    negative = np.clip(-scaled, 0.0, 1.0)
+    green -= 255.0 * positive
+    blue -= 255.0 * positive
+    red -= 255.0 * negative
+    green -= 255.0 * negative
+
+    rgb = np.stack([red, green, blue], axis=-1)
+    rgb[~mask] = np.array([40, 40, 40], dtype="float32")
+    return rgb.astype("uint8")
+
+
+def _robust_scale(values: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    valid = values[mask & np.isfinite(values)]
+    if valid.size == 0:
+        return np.zeros_like(values, dtype="float32")
+    lo, hi = np.percentile(valid, [2, 98])
+    if hi <= lo:
+        hi = lo + 1.0
+    return np.clip((values - lo) / (hi - lo), 0.0, 1.0).astype("float32")
 
 
 def _init_wandb(

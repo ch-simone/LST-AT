@@ -18,6 +18,7 @@ dev = [
   "pytest>=8",
 ]
 tracking = [
+  "pillow>=11",
   "wandb>=0.19",
 ]
 

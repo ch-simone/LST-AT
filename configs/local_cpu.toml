@@ -34,6 +34,11 @@ device = "cpu"
 max_train_examples = 1000
 max_val_examples = 200
 
+[evaluation]
+log_image_interval = 10
+num_image_examples = 4
+residual_heatmap_limit_c = 10.0
+
 [wandb]
 enabled = false
 project = "lst-at"

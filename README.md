@@ -87,6 +87,12 @@ python -m lstat.train --config configs/default.toml
 
 Artifacts are written to `runs/resunet_monthly` by default.
 Training metrics are logged to Weights & Biases when `[wandb].enabled = true`.
+Validation residual images are logged at epoch 1, every
+`[evaluation].log_image_interval` epochs, and the final epoch. The residual is:
+
+```text
+target AT - predicted AT
+```
 
 ## Notes
 
