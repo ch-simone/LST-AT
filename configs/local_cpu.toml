@@ -1,0 +1,43 @@
+data_root = "/Users/simonechierichini/Documents/Codex/LST-AT/data/Monthly"
+output_dir = "runs/local_cpu"
+seed = 42
+
+[split]
+train_years = [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020]
+val_years = [2021, 2022]
+test_years = [2023, 2024, 2025]
+
+[data]
+include_mask_channel = true
+include_time_channels = true
+apply_modis_correction = true
+lst_mean = 25.0
+lst_std = 15.0
+tair_mean = 20.0
+tair_std = 12.0
+
+[model]
+base_channels = 8
+depth = 2
+dropout = 0.0
+
+[training]
+epochs = 5
+batch_size = 8
+learning_rate = 0.001
+weight_decay = 0.0001
+loss = "huber"
+min_pad_size = 32
+pad_multiple = 8
+num_workers = 0
+device = "cpu"
+max_train_examples = 1000
+max_val_examples = 200
+
+[wandb]
+enabled = false
+project = "lst-at"
+entity = ""
+mode = "disabled"
+run_name = "local-cpu-small"
+watch_model = false

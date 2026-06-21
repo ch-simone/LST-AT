@@ -73,6 +73,12 @@ Quick smoke run:
 python -m lstat.train --config configs/smoke.toml
 ```
 
+Small CPU learning run:
+
+```bash
+python -m lstat.train --config configs/local_cpu.toml
+```
+
 Full configured run:
 
 ```bash
