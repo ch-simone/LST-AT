@@ -93,6 +93,13 @@ wandb login
 python -m lstat.train --config configs/full_gpu.toml
 ```
 
+Daily GPU-machine run:
+
+```bash
+python scripts/inspect_dataset.py --config configs/full_gpu_daily.toml
+python -m lstat.train --config configs/full_gpu_daily.toml
+```
+
 Artifacts are written to `runs/resunet_monthly` by default.
 Training metrics are logged to Weights & Biases when `[wandb].enabled = true`.
 Validation residual images are logged at epoch 1, every

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 import math
 
 import numpy as np
@@ -57,7 +58,15 @@ class LstatDataset:
         if self.include_mask_channel:
             channels.append(valid.astype("float32"))
         if self.include_time_channels:
-            channels.extend(_time_channels(example.month, example.phase, x.shape))
+            channels.extend(
+                _time_channels(
+                    year=example.year,
+                    month=example.month,
+                    day=example.day,
+                    phase=example.phase,
+                    shape=x.shape,
+                )
+            )
 
         return {
             "x": np.stack(channels).astype("float32"),
@@ -66,6 +75,8 @@ class LstatDataset:
             "city": example.city,
             "year": example.year,
             "month": example.month,
+            "day": -1 if example.day is None else example.day,
+            "temporal_resolution": example.temporal_resolution,
             "phase": example.phase,
         }
 
@@ -79,12 +90,29 @@ def input_channel_count(include_mask_channel: bool, include_time_channels: bool)
     return count
 
 
-def _time_channels(month: int, phase: str, shape: tuple[int, int]) -> list[np.ndarray]:
+def _time_channels(
+    year: int,
+    month: int,
+    day: int | None,
+    phase: str,
+    shape: tuple[int, int],
+) -> list[np.ndarray]:
     h, w = shape
-    angle = 2.0 * math.pi * (month - 1) / 12.0
+    if day is None:
+        # Monthly samples get a mid-month annual position.
+        annual_position = (month - 0.5) / 12.0
+    else:
+        day_of_year = date(year, month, day).timetuple().tm_yday
+        days_in_year = 366 if _is_leap_year(year) else 365
+        annual_position = (day_of_year - 1) / days_in_year
+    angle = 2.0 * math.pi * annual_position
     day_flag = 1.0 if phase == "day" else 0.0
     return [
         np.full((h, w), day_flag, dtype="float32"),
         np.full((h, w), math.sin(angle), dtype="float32"),
         np.full((h, w), math.cos(angle), dtype="float32"),
     ]
+
+
+def _is_leap_year(year: int) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)

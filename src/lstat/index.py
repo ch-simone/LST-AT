@@ -6,7 +6,7 @@ import re
 
 
 FILENAME_RE = re.compile(
-    r"^(MODIS_LST|ERA5Land_Tair)_Monthly_(.+)_(\d{4})_(\d{2})_day-night_COG\.tif$"
+    r"^(MODIS_LST|ERA5Land_Tair)_(Monthly|Daily)_(.+)_(\d{4})_(\d{2})(?:_(\d{2}))?_day-night_COG\.tif$"
 )
 
 
@@ -15,6 +15,8 @@ class PairedRaster:
     city: str
     year: int
     month: int
+    day: int | None
+    temporal_resolution: str
     modis_path: Path
     era5_path: Path
 
@@ -24,6 +26,8 @@ class SingleMapExample:
     city: str
     year: int
     month: int
+    day: int | None
+    temporal_resolution: str
     phase: str
     modis_path: Path
     era5_path: Path
@@ -32,25 +36,37 @@ class SingleMapExample:
 
 def build_pairs(data_root: str | Path) -> list[PairedRaster]:
     data_root = Path(data_root)
-    records: dict[tuple[str, int, int], dict[str, Path]] = {}
+    records: dict[tuple[str, str, int, int, int | None], dict[str, Path]] = {}
 
     for path in data_root.rglob("*.tif"):
         match = FILENAME_RE.match(path.name)
         if not match:
             continue
-        prefix, city, year, month = match.groups()
+        prefix, temporal_resolution, city, year, month, day = match.groups()
+        if temporal_resolution == "Daily" and day is None:
+            continue
+        if temporal_resolution == "Monthly" and day is not None:
+            continue
         product = "modis" if prefix == "MODIS_LST" else "era5"
-        key = (city, int(year), int(month))
+        key = (
+            temporal_resolution.lower(),
+            city,
+            int(year),
+            int(month),
+            int(day) if day is not None else None,
+        )
         records.setdefault(key, {})[product] = path
 
     pairs = []
-    for (city, year, month), paths in sorted(records.items()):
+    for (temporal_resolution, city, year, month, day), paths in sorted(records.items()):
         if "modis" in paths and "era5" in paths:
             pairs.append(
                 PairedRaster(
                     city=city,
                     year=year,
                     month=month,
+                    day=day,
+                    temporal_resolution=temporal_resolution,
                     modis_path=paths["modis"],
                     era5_path=paths["era5"],
                 )
@@ -76,6 +92,8 @@ def build_examples(
                     city=pair.city,
                     year=pair.year,
                     month=pair.month,
+                    day=pair.day,
+                    temporal_resolution=pair.temporal_resolution,
                     phase=phase,
                     modis_path=pair.modis_path,
                     era5_path=pair.era5_path,

@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--sample-city", default="Rome")
     parser.add_argument("--sample-year", type=int, default=2024)
     parser.add_argument("--sample-month", type=int, default=10)
+    parser.add_argument("--sample-day", type=int, default=0)
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -28,27 +29,37 @@ def main() -> None:
     years = sorted({pair.year for pair in pairs})
     cities = sorted({pair.city for pair in pairs})
     by_year_month = Counter((pair.year, pair.month) for pair in pairs)
+    by_date = Counter((pair.year, pair.month, pair.day) for pair in pairs)
     by_city = Counter(pair.city for pair in pairs)
+    temporal_resolutions = sorted({pair.temporal_resolution for pair in pairs})
 
     print(f"data_root: {data_root}")
     print(f"paired rasters: {len(pairs)}")
     print(f"single-map examples: {len(examples)}")
+    print(f"temporal resolutions: {', '.join(temporal_resolutions)}")
     print(f"cities: {len(cities)}")
     print(f"years: {years[0]}-{years[-1]} ({len(years)})")
     print(f"year-months: {len(by_year_month)}")
+    if any(pair.day is not None for pair in pairs):
+        print(f"dates: {len(by_date)}")
     print(f"city pair counts: min={min(by_city.values())} max={max(by_city.values())}")
 
-    sample = next(
+    candidates = [
         pair
         for pair in pairs
         if pair.city == args.sample_city
         and pair.year == args.sample_year
         and pair.month == args.sample_month
-    )
+        and (args.sample_day <= 0 or pair.day == args.sample_day)
+    ]
+    sample = candidates[0] if candidates else pairs[0]
     modis = read_geotiff(sample.modis_path)
     era5 = read_geotiff(sample.era5_path)
     print("")
-    print(f"sample: {sample.city} {sample.year}-{sample.month:02d}")
+    date_label = f"{sample.year}-{sample.month:02d}"
+    if sample.day is not None:
+        date_label += f"-{sample.day:02d}"
+    print(f"sample: {sample.city} {date_label}")
     print(f"MODIS shape: {modis.array.shape}, nodata={modis.nodata}")
     print(f"ERA5 shape:  {era5.array.shape}, nodata={era5.nodata}")
     print(f"paired grid match: {modis.array.shape[:2] == era5.array.shape[:2]}")

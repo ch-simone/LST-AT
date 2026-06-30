@@ -32,6 +32,8 @@ def pad_collate(batch: list[dict], min_size: int = 32, multiple: int = 8) -> dic
         "city": [item["city"] for item in batch],
         "year": torch.tensor([item["year"] for item in batch]),
         "month": torch.tensor([item["month"] for item in batch]),
+        "day": torch.tensor([item["day"] for item in batch]),
+        "temporal_resolution": [item["temporal_resolution"] for item in batch],
         "phase": [item["phase"] for item in batch],
     }
 
