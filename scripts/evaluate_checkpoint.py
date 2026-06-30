@@ -30,6 +30,7 @@ def main() -> None:
     parser.add_argument("--output", default="")
     parser.add_argument("--device", default="")
     parser.add_argument("--scatter-output", default="")
+    parser.add_argument("--scatter-dir", default="")
     parser.add_argument("--max-scatter-points", type=int, default=100000)
     args = parser.parse_args()
 
@@ -121,10 +122,11 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
+    scatter_dir = Path(args.scatter_dir) if args.scatter_dir else output_dir
     scatter_path = (
         Path(args.scatter_output)
         if args.scatter_output
-        else output_dir / f"{args.split}_pred_vs_actual.png"
+        else scatter_dir / f"{args.split}_pred_vs_actual.png"
     )
     save_scatter_plot(
         actual=scatter["actual"],
@@ -133,12 +135,31 @@ def main() -> None:
         path=scatter_path,
         title=f"{args.split} predicted vs actual AT",
     )
+    day_scatter_path = scatter_dir / f"{args.split}_day_pred_vs_actual.png"
+    night_scatter_path = scatter_dir / f"{args.split}_night_pred_vs_actual.png"
+    save_phase_scatter_plot(
+        scatter=scatter,
+        phase_name="day",
+        path=day_scatter_path,
+        title=f"{args.split} day predicted vs actual AT",
+    )
+    save_phase_scatter_plot(
+        scatter=scatter,
+        phase_name="night",
+        path=night_scatter_path,
+        title=f"{args.split} night predicted vs actual AT",
+    )
     result["scatter_plot"] = str(scatter_path)
+    result["day_scatter_plot"] = str(day_scatter_path)
+    result["night_scatter_plot"] = str(night_scatter_path)
     output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
+    print_metric_summary(result)
     print(json.dumps(result, indent=2))
     print(f"wrote: {output_path}")
     print(f"wrote: {scatter_path}")
+    print(f"wrote: {day_scatter_path}")
+    print(f"wrote: {night_scatter_path}")
 
 
 @torch.no_grad()
@@ -380,6 +401,48 @@ def save_scatter_plot(
     draw.rectangle((720, 35, 735, 50), fill=colors["night"])
     draw.text((740, 34), "night", fill=(0, 0, 0))
     image.save(path)
+
+
+def save_phase_scatter_plot(
+    scatter: dict[str, np.ndarray],
+    phase_name: str,
+    path: Path,
+    title: str,
+) -> None:
+    keep = scatter["phase"] == phase_name
+    save_scatter_plot(
+        actual=scatter["actual"][keep],
+        predicted=scatter["predicted"][keep],
+        phase=scatter["phase"][keep],
+        path=path,
+        title=title,
+    )
+
+
+def print_metric_summary(result: dict) -> None:
+    print("")
+    print("Metric summary")
+    print("-------------")
+    print(f"{'split':<10} {'MAE C':>10} {'RMSE C':>10} {'R2':>10}")
+    print(
+        f"{'overall':<10} "
+        f"{result['mae_c']:>10.3f} "
+        f"{result['rmse_c']:>10.3f} "
+        f"{result['r2']:>10.4f}"
+    )
+    print(
+        f"{'day':<10} "
+        f"{result['day_mae_c']:>10.3f} "
+        f"{result['day_rmse_c']:>10.3f} "
+        f"{result['day_r2']:>10.4f}"
+    )
+    print(
+        f"{'night':<10} "
+        f"{result['night_mae_c']:>10.3f} "
+        f"{result['night_rmse_c']:>10.3f} "
+        f"{result['night_r2']:>10.4f}"
+    )
+    print("")
 
 
 if __name__ == "__main__":
