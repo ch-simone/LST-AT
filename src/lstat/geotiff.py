@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+import os
 from pathlib import Path
 import struct
 import zlib
@@ -76,6 +78,19 @@ class Raster:
 
 
 def read_geotiff(path: str | Path) -> Raster:
+    path = Path(path)
+    stat = path.stat()
+    backend = os.environ.get("LSTAT_TIFF_BACKEND", "auto").lower()
+    return _read_geotiff_cached(str(path), stat.st_mtime_ns, stat.st_size, backend)
+
+
+@lru_cache(maxsize=int(os.environ.get("LSTAT_RASTER_CACHE_SIZE", "512")))
+def _read_geotiff_cached(
+    path: str,
+    mtime_ns: int,
+    size: int,
+    backend: str,
+) -> Raster:
     """Read the small tiled float GeoTIFFs used by this project.
 
     This is intentionally narrow: it supports little/big endian tiled or
@@ -83,6 +98,17 @@ def read_geotiff(path: str | Path) -> Raster:
     rasterio/GDAL mandatory for the first project scaffold.
     """
     path = Path(path)
+    if backend not in {"auto", "builtin", "tifffile"}:
+        raise ValueError(
+            "LSTAT_TIFF_BACKEND must be one of: auto, builtin, tifffile"
+        )
+    if backend in {"auto", "tifffile"}:
+        try:
+            return _read_with_tifffile(path)
+        except ImportError:
+            if backend == "tifffile":
+                raise
+
     data = path.read_bytes()
     endian = _read_endian(data)
     tags = _read_first_ifd(data, endian)
@@ -103,6 +129,48 @@ def read_geotiff(path: str | Path) -> Raster:
 
     nodata = float(tags["nodata"]) if "nodata" in tags else None
     return Raster(array=array, nodata=nodata, metadata=tags)
+
+
+def _read_with_tifffile(path: Path) -> Raster:
+    import tifffile
+
+    with tifffile.TiffFile(path) as tif:
+        page = tif.pages[0]
+        tags = {
+            TAG_NAMES.get(tag.code, str(tag.code)): tag.value
+            for tag in page.tags.values()
+            if TAG_NAMES.get(tag.code, str(tag.code)) is not None
+        }
+        array = page.asarray()
+
+    width = int(tags.get("width", array.shape[-1]))
+    height = int(tags.get("height", array.shape[-2]))
+    samples = int(tags.get("samples_per_pixel", 1))
+    array = _normalize_tifffile_array(array, height=height, width=width, samples=samples)
+    nodata = float(tags["nodata"]) if "nodata" in tags else None
+    return Raster(array=array.astype("float32", copy=False), nodata=nodata, metadata=tags)
+
+
+def _normalize_tifffile_array(
+    array: np.ndarray,
+    height: int,
+    width: int,
+    samples: int,
+) -> np.ndarray:
+    array = np.asarray(array)
+    if array.ndim == 2:
+        return array[:, :, None]
+    if array.ndim != 3:
+        raise ValueError(f"Expected 2D or 3D TIFF array, got shape {array.shape}")
+    if array.shape == (height, width, samples):
+        return array
+    if array.shape == (samples, height, width):
+        return np.moveaxis(array, 0, -1)
+    if array.shape[-1] == samples:
+        return array
+    if array.shape[0] == samples:
+        return np.moveaxis(array, 0, -1)
+    raise ValueError(f"Cannot normalize TIFF array shape {array.shape}")
 
 
 def _read_endian(data: bytes) -> str:

@@ -21,6 +21,10 @@ tracking = [
   "pillow>=11",
   "wandb>=0.19",
 ]
+fastio = [
+  "imagecodecs>=2024.12",
+  "tifffile>=2024.12",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

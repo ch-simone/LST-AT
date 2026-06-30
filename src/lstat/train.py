@@ -72,16 +72,14 @@ def train(config: dict, config_path: str | Path) -> None:
         include_time_channels=bool(data_cfg["include_time_channels"]),
     )
 
+    num_workers = int(config["training"]["num_workers"])
+    loader_worker_kwargs = _dataloader_worker_kwargs(config, device, num_workers)
     train_loader = DataLoader(
         train_ds,
         batch_size=int(config["training"]["batch_size"]),
         shuffle=True,
-        num_workers=int(config["training"]["num_workers"]),
-        pin_memory=bool(config["training"].get("pin_memory", device.type == "cuda")),
-        persistent_workers=(
-            bool(config["training"].get("persistent_workers", False))
-            and int(config["training"]["num_workers"]) > 0
-        ),
+        num_workers=num_workers,
+        **loader_worker_kwargs,
         collate_fn=partial(
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
@@ -92,12 +90,8 @@ def train(config: dict, config_path: str | Path) -> None:
         val_ds,
         batch_size=int(config["training"]["batch_size"]),
         shuffle=False,
-        num_workers=int(config["training"]["num_workers"]),
-        pin_memory=bool(config["training"].get("pin_memory", device.type == "cuda")),
-        persistent_workers=(
-            bool(config["training"].get("persistent_workers", False))
-            and int(config["training"]["num_workers"]) > 0
-        ),
+        num_workers=num_workers,
+        **loader_worker_kwargs,
         collate_fn=partial(
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
@@ -358,6 +352,23 @@ def _limit_examples(examples: list, limit: int, seed: int) -> list:
     rng = random.Random(seed)
     indices = sorted(rng.sample(range(len(examples)), limit))
     return [examples[index] for index in indices]
+
+
+def _dataloader_worker_kwargs(
+    config: dict,
+    device: torch.device,
+    num_workers: int,
+) -> dict:
+    training_cfg = config["training"]
+    kwargs = {
+        "pin_memory": bool(training_cfg.get("pin_memory", device.type == "cuda")),
+    }
+    if num_workers > 0:
+        kwargs["persistent_workers"] = bool(
+            training_cfg.get("persistent_workers", False)
+        )
+        kwargs["prefetch_factor"] = int(training_cfg.get("prefetch_factor", 2))
+    return kwargs
 
 
 def _should_log_eval_images(config: dict, epoch: int, total_epochs: int) -> bool:

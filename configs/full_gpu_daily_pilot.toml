@@ -22,20 +22,21 @@ depth = 3
 dropout = 0.05
 
 [training]
-epochs = 10
-batch_size = 8
+epochs = 8
+batch_size = 16
 learning_rate = 0.001
 weight_decay = 0.0001
 loss = "huber"
 min_pad_size = 32
 pad_multiple = 8
-num_workers = 2
+num_workers = 4
 device = "auto"
-max_train_examples = 5000
-max_val_examples = 1000
+max_train_examples = 1000
+max_val_examples = 500
 pin_memory = true
 persistent_workers = true
-log_every_batches = 50
+prefetch_factor = 4
+log_every_batches = 10
 
 [evaluation]
 log_image_interval = 2
