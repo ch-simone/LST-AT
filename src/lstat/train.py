@@ -77,6 +77,11 @@ def train(config: dict, config_path: str | Path) -> None:
         batch_size=int(config["training"]["batch_size"]),
         shuffle=True,
         num_workers=int(config["training"]["num_workers"]),
+        pin_memory=bool(config["training"].get("pin_memory", device.type == "cuda")),
+        persistent_workers=(
+            bool(config["training"].get("persistent_workers", False))
+            and int(config["training"]["num_workers"]) > 0
+        ),
         collate_fn=partial(
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
@@ -88,6 +93,11 @@ def train(config: dict, config_path: str | Path) -> None:
         batch_size=int(config["training"]["batch_size"]),
         shuffle=False,
         num_workers=int(config["training"]["num_workers"]),
+        pin_memory=bool(config["training"].get("pin_memory", device.type == "cuda")),
+        persistent_workers=(
+            bool(config["training"].get("persistent_workers", False))
+            and int(config["training"]["num_workers"]) > 0
+        ),
         collate_fn=partial(
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
@@ -133,6 +143,10 @@ def train(config: dict, config_path: str | Path) -> None:
             device,
             loss_name,
             normalization.tair_std,
+            epoch=epoch,
+            total_batches=len(train_loader),
+            log_every_batches=int(config["training"].get("log_every_batches", 0)),
+            wandb_run=wandb_run,
         )
         val_metrics = _evaluate(model, val_loader, device, loss_name, normalization.tair_std)
         epoch_seconds = time.time() - start_time
@@ -212,11 +226,26 @@ def train(config: dict, config_path: str | Path) -> None:
     _wandb_finish(wandb_run)
 
 
-def _run_epoch(model, loader, optimizer, device, loss_name: str, target_std: float) -> float:
+def _run_epoch(
+    model,
+    loader,
+    optimizer,
+    device,
+    loss_name: str,
+    target_std: float,
+    epoch: int = 0,
+    total_batches: int | None = None,
+    log_every_batches: int = 0,
+    wandb_run=None,
+) -> float:
     model.train()
     total_loss = 0.0
     total_pixels = 0.0
-    for batch in loader:
+    interval_loss = 0.0
+    interval_pixels = 0.0
+    epoch_start = time.time()
+    total_batches = total_batches or len(loader)
+    for batch_index, batch in enumerate(loader, start=1):
         x = batch["x"].to(device)
         y = batch["y"].to(device)
         mask = batch["mask"].to(device)
@@ -228,6 +257,36 @@ def _run_epoch(model, loader, optimizer, device, loss_name: str, target_std: flo
         pixels = mask.sum().item()
         total_loss += loss.item() * pixels
         total_pixels += pixels
+        interval_loss += loss.item() * pixels
+        interval_pixels += pixels
+        if log_every_batches > 0 and (
+            batch_index % log_every_batches == 0 or batch_index == total_batches
+        ):
+            elapsed = time.time() - epoch_start
+            running_loss = total_loss / max(total_pixels, 1.0)
+            recent_loss = interval_loss / max(interval_pixels, 1.0)
+            batches_per_second = batch_index / max(elapsed, 1e-6)
+            print(
+                f"epoch {epoch:03d} batch {batch_index:05d}/{total_batches:05d} "
+                f"recent_loss={recent_loss:.4f} "
+                f"running_loss={running_loss:.4f} "
+                f"batches_per_s={batches_per_second:.2f} "
+                f"elapsed={elapsed:.1f}s",
+                flush=True,
+            )
+            _wandb_log(
+                wandb_run,
+                {
+                    "epoch": epoch,
+                    "train/batch": batch_index,
+                    "train/recent_loss": recent_loss,
+                    "train/running_loss": running_loss,
+                    "train/batches_per_second": batches_per_second,
+                    "train/epoch_elapsed_seconds": elapsed,
+                },
+            )
+            interval_loss = 0.0
+            interval_pixels = 0.0
     return total_loss / max(total_pixels, 1.0)
 
 
