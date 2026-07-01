@@ -37,6 +37,8 @@ pin_memory = true
 persistent_workers = true
 prefetch_factor = 4
 log_every_batches = 10
+train_crop_size = 256
+eval_crop_size = 256
 
 [evaluation]
 log_image_interval = 2

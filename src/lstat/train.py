@@ -71,6 +71,8 @@ def train(config: dict, config_path: str | Path) -> None:
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
             multiple=int(config["training"]["pad_multiple"]),
+            crop_size=int(config["training"].get("train_crop_size", 0)),
+            random_crop=True,
         ),
     )
     val_loader = DataLoader(
@@ -83,6 +85,8 @@ def train(config: dict, config_path: str | Path) -> None:
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
             multiple=int(config["training"]["pad_multiple"]),
+            crop_size=int(config["training"].get("eval_crop_size", 0)),
+            random_crop=False,
         ),
     )
 
@@ -251,6 +255,7 @@ def _run_epoch(
                 f"epoch {epoch:03d} batch {batch_index:05d}/{total_batches:05d} "
                 f"recent_loss={recent_loss:.4f} "
                 f"running_loss={running_loss:.4f} "
+                f"shape={tuple(x.shape)} "
                 f"batches_per_s={batches_per_second:.2f} "
                 f"elapsed={elapsed:.1f}s",
                 flush=True,

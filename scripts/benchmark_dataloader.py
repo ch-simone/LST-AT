@@ -68,6 +68,13 @@ def main() -> None:
             pad_collate,
             min_size=int(train_cfg["min_pad_size"]),
             multiple=int(train_cfg["pad_multiple"]),
+            crop_size=int(
+                train_cfg.get(
+                    "train_crop_size" if args.split == "train" else "eval_crop_size",
+                    0,
+                )
+            ),
+            random_crop=args.split == "train",
         ),
     )
 
@@ -76,6 +83,15 @@ def main() -> None:
     print(f"num_workers: {num_workers}")
     print(f"copy_to_device: {args.copy_to_device}")
     print(f"device: {device}")
+    print(
+        "crop_size:",
+        int(
+            train_cfg.get(
+                "train_crop_size" if args.split == "train" else "eval_crop_size",
+                0,
+            )
+        ),
+    )
 
     start = time.time()
     total_samples = 0
@@ -86,6 +102,8 @@ def main() -> None:
             batch["x"].to(device, non_blocking=True)
             batch["y"].to(device, non_blocking=True)
             batch["mask"].to(device, non_blocking=True)
+        if batch_index == 1:
+            print(f"batch_shape: {tuple(batch['x'].shape)}")
         total_samples += int(batch["x"].shape[0])
         total_pixels += int(batch["mask"].sum().item())
         if batch_index >= total_batches:

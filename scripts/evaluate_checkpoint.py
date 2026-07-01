@@ -67,6 +67,8 @@ def main() -> None:
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
             multiple=int(config["training"]["pad_multiple"]),
+            crop_size=int(config["training"].get("eval_crop_size", 0)),
+            random_crop=False,
         ),
     )
 

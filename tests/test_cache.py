@@ -121,3 +121,28 @@ def test_sample_cache_reads_original_shape(tmp_path):
     assert item["x"].dtype == np.float32
     assert item["mask"].sum() == 6
     assert item["phase"] == "night"
+
+
+def test_pad_collate_can_crop_before_padding():
+    item = {
+        "x": np.ones((5, 10, 12), dtype="float32"),
+        "y": np.ones((1, 10, 12), dtype="float32"),
+        "mask": np.ones((1, 10, 12), dtype="float32"),
+        "city": "Rome",
+        "year": 2024,
+        "month": 10,
+        "day": 7,
+        "temporal_resolution": "daily",
+        "phase": "day",
+    }
+
+    batch = pad_collate(
+        [item],
+        min_size=4,
+        multiple=4,
+        crop_size=6,
+        random_crop=False,
+    )
+
+    assert tuple(batch["x"].shape) == (1, 5, 8, 8)
+    assert batch["shape"].tolist() == [[6, 6]]
