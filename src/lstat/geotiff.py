@@ -77,6 +77,30 @@ class Raster:
         return valid
 
 
+@dataclass(frozen=True)
+class RasterInfo:
+    height: int
+    width: int
+    samples: int
+    nodata: float | None
+    metadata: dict
+
+
+def read_geotiff_info(path: str | Path) -> RasterInfo:
+    path = Path(path)
+    data = path.read_bytes()
+    endian = _read_endian(data)
+    tags = _read_first_ifd(data, endian)
+    nodata = float(tags["nodata"]) if "nodata" in tags else None
+    return RasterInfo(
+        height=int(tags["height"]),
+        width=int(tags["width"]),
+        samples=int(tags.get("samples_per_pixel", 1)),
+        nodata=nodata,
+        metadata=tags,
+    )
+
+
 def read_geotiff(path: str | Path) -> Raster:
     path = Path(path)
     stat = path.stat()

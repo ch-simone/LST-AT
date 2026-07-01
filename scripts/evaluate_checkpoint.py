@@ -15,11 +15,10 @@ from torch.utils.data import DataLoader
 
 from lstat.collate import pad_collate
 from lstat.config import load_config, resolve_output_dir
-from lstat.dataset import LstatDataset, Normalization, input_channel_count
-from lstat.index import build_examples
+from lstat.dataset import Normalization, input_channel_count
 from lstat.losses import masked_huber
 from lstat.model import ResUNet
-from lstat.train import _limit_examples, _resolve_device
+from lstat.train import _build_dataset, _dataloader_worker_kwargs, _resolve_device
 
 
 def main() -> None:
@@ -44,24 +43,6 @@ def main() -> None:
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model_config = checkpoint.get("config", config)
     data_config = config["data"]
-    split_years = {
-        "train": config["split"]["train_years"],
-        "val": config["split"]["val_years"],
-        "test": config["split"]["test_years"],
-    }[args.split]
-
-    examples = build_examples(config["data_root"], years=split_years)
-    limit_key = {
-        "train": "max_train_examples",
-        "val": "max_val_examples",
-        "test": "max_test_examples",
-    }[args.split]
-    examples = _limit_examples(
-        examples,
-        config["training"].get(limit_key, 0),
-        int(config.get("seed", 42)) + 10,
-    )
-
     normalization = Normalization(
         lst_mean=float(data_config["lst_mean"]),
         lst_std=float(data_config["lst_std"]),
@@ -69,17 +50,19 @@ def main() -> None:
         tair_std=float(data_config["tair_std"]),
         apply_modis_correction=bool(data_config["apply_modis_correction"]),
     )
-    dataset = LstatDataset(
-        examples,
+    dataset = _build_dataset(
+        config=config,
+        split=args.split,
         normalization=normalization,
-        include_mask_channel=bool(data_config["include_mask_channel"]),
-        include_time_channels=bool(data_config["include_time_channels"]),
+        seed=int(config.get("seed", 42)) + 10,
     )
+    num_workers = int(config["training"]["num_workers"])
     loader = DataLoader(
         dataset,
         batch_size=int(config["training"]["batch_size"]),
         shuffle=False,
-        num_workers=int(config["training"]["num_workers"]),
+        num_workers=num_workers,
+        **_dataloader_worker_kwargs(config, device, num_workers),
         collate_fn=partial(
             pad_collate,
             min_size=int(config["training"]["min_pad_size"]),
@@ -114,7 +97,7 @@ def main() -> None:
         "checkpoint": str(checkpoint_path),
         "checkpoint_epoch": checkpoint.get("epoch"),
         "checkpoint_val_mae_c": checkpoint.get("val_mae_c"),
-        "examples": len(examples),
+        "examples": len(dataset),
         **metrics,
     }
 

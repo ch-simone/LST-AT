@@ -1,0 +1,56 @@
+data_root = "data/Daily"
+output_dir = "runs/full_gpu_daily_cached"
+seed = 42
+
+[split]
+train_years = [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020]
+val_years = [2021, 2022]
+test_years = [2023, 2024, 2025]
+
+[data]
+include_mask_channel = true
+include_time_channels = true
+apply_modis_correction = true
+lst_mean = 25.0
+lst_std = 15.0
+tair_mean = 20.0
+tair_std = 12.0
+
+[cache]
+enabled = true
+root = "data/cache/daily_full"
+
+[model]
+base_channels = 16
+depth = 3
+dropout = 0.05
+
+[training]
+epochs = 30
+batch_size = 16
+learning_rate = 0.001
+weight_decay = 0.0001
+loss = "huber"
+min_pad_size = 32
+pad_multiple = 8
+num_workers = 4
+device = "auto"
+pin_memory = true
+persistent_workers = true
+prefetch_factor = 4
+log_every_batches = 250
+
+[evaluation]
+log_image_interval = 5
+num_image_examples = 4
+residual_heatmap_limit_c = 10.0
+image_selection = "most_valid"
+max_image_batches = 20
+
+[wandb]
+enabled = true
+project = "lst-at"
+entity = ""
+mode = "online"
+run_name = "resunet-daily-full-cached"
+watch_model = false

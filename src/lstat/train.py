@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from .cache import CachedLstatDataset
 from .collate import pad_collate
 from .config import load_config, resolve_output_dir
 from .dataset import LstatDataset, Normalization, input_channel_count
@@ -35,23 +36,7 @@ def train(config: dict, config_path: str | Path) -> None:
     output_dir = resolve_output_dir(config, config_path)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    data_root = config["data_root"]
     data_cfg = config["data"]
-    train_examples = build_examples(data_root, years=config["split"]["train_years"])
-    val_examples = build_examples(data_root, years=config["split"]["val_years"])
-    train_examples = _limit_examples(
-        train_examples,
-        config["training"].get("max_train_examples", 0),
-        seed,
-    )
-    val_examples = _limit_examples(
-        val_examples,
-        config["training"].get("max_val_examples", 0),
-        seed + 1,
-    )
-    print(f"train examples: {len(train_examples)}")
-    print(f"val examples:   {len(val_examples)}")
-
     normalization = Normalization(
         lst_mean=float(data_cfg["lst_mean"]),
         lst_std=float(data_cfg["lst_std"]),
@@ -59,18 +44,20 @@ def train(config: dict, config_path: str | Path) -> None:
         tair_std=float(data_cfg["tair_std"]),
         apply_modis_correction=bool(data_cfg["apply_modis_correction"]),
     )
-    train_ds = LstatDataset(
-        train_examples,
+    train_ds = _build_dataset(
+        config=config,
+        split="train",
         normalization=normalization,
-        include_mask_channel=bool(data_cfg["include_mask_channel"]),
-        include_time_channels=bool(data_cfg["include_time_channels"]),
+        seed=seed,
     )
-    val_ds = LstatDataset(
-        val_examples,
+    val_ds = _build_dataset(
+        config=config,
+        split="val",
         normalization=normalization,
-        include_mask_channel=bool(data_cfg["include_mask_channel"]),
-        include_time_channels=bool(data_cfg["include_time_channels"]),
+        seed=seed + 1,
     )
+    print(f"train examples: {len(train_ds)}")
+    print(f"val examples:   {len(val_ds)}")
 
     num_workers = int(config["training"]["num_workers"])
     loader_worker_kwargs = _dataloader_worker_kwargs(config, device, num_workers)
@@ -352,6 +339,50 @@ def _limit_examples(examples: list, limit: int, seed: int) -> list:
     rng = random.Random(seed)
     indices = sorted(rng.sample(range(len(examples)), limit))
     return [examples[index] for index in indices]
+
+
+def _build_dataset(
+    *,
+    config: dict,
+    split: str,
+    normalization: Normalization,
+    seed: int,
+):
+    cache_cfg = config.get("cache", {})
+    if bool(cache_cfg.get("enabled", False)):
+        cache_root = Path(cache_cfg["root"])
+        dataset = CachedLstatDataset(cache_root / split)
+        limit = _split_limit(config, split)
+        if limit > 0 and limit < len(dataset):
+            raise ValueError(
+                "max_*_examples limits are not supported when training from "
+                "a prebuilt cache. Build a smaller cache instead."
+            )
+        return dataset
+
+    split_years = {
+        "train": config["split"]["train_years"],
+        "val": config["split"]["val_years"],
+        "test": config["split"].get("test_years", []),
+    }[split]
+    examples = build_examples(config["data_root"], years=split_years)
+    examples = _limit_examples(examples, _split_limit(config, split), seed)
+    data_cfg = config["data"]
+    return LstatDataset(
+        examples,
+        normalization=normalization,
+        include_mask_channel=bool(data_cfg["include_mask_channel"]),
+        include_time_channels=bool(data_cfg["include_time_channels"]),
+    )
+
+
+def _split_limit(config: dict, split: str) -> int:
+    limit_key = {
+        "train": "max_train_examples",
+        "val": "max_val_examples",
+        "test": "max_test_examples",
+    }[split]
+    return int(config["training"].get(limit_key, 0) or 0)
 
 
 def _dataloader_worker_kwargs(

@@ -13,11 +13,10 @@ from torch.utils.data import DataLoader
 
 from lstat.collate import pad_collate
 from lstat.config import load_config
-from lstat.dataset import LstatDataset, Normalization
-from lstat.index import build_examples
+from lstat.dataset import Normalization
 from lstat.train import (
+    _build_dataset,
     _dataloader_worker_kwargs,
-    _limit_examples,
     _resolve_device,
     _seed_everything,
 )
@@ -37,15 +36,6 @@ def main() -> None:
     seed = int(config.get("seed", 42))
     _seed_everything(seed)
 
-    split_key = f"{args.split}_years"
-    examples = build_examples(config["data_root"], years=config["split"][split_key])
-    limit_key = f"max_{args.split}_examples"
-    examples = _limit_examples(
-        examples,
-        config["training"].get(limit_key, 0),
-        seed,
-    )
-
     data_cfg = config["data"]
     train_cfg = config["training"]
     batch_size = args.batch_size or int(train_cfg["batch_size"])
@@ -62,11 +52,11 @@ def main() -> None:
         tair_std=float(data_cfg["tair_std"]),
         apply_modis_correction=bool(data_cfg["apply_modis_correction"]),
     )
-    dataset = LstatDataset(
-        examples,
+    dataset = _build_dataset(
+        config=config,
+        split=args.split,
         normalization=normalization,
-        include_mask_channel=bool(data_cfg["include_mask_channel"]),
-        include_time_channels=bool(data_cfg["include_time_channels"]),
+        seed=seed,
     )
     loader = DataLoader(
         dataset,
@@ -81,7 +71,7 @@ def main() -> None:
         ),
     )
 
-    print(f"examples: {len(examples)}")
+    print(f"examples: {len(dataset)}")
     print(f"batch_size: {batch_size}")
     print(f"num_workers: {num_workers}")
     print(f"copy_to_device: {args.copy_to_device}")
