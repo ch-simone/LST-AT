@@ -115,11 +115,22 @@ def train(config: dict, config_path: str | Path) -> None:
         weight_decay=float(config["training"]["weight_decay"]),
     )
     best_val = float("inf")
+    best_epoch = 0
     loss_name = config["training"].get("loss", "huber")
     total_epochs = int(config["training"]["epochs"])
+    scheduler = _build_scheduler(optimizer, config, total_epochs=total_epochs)
     final_val_metrics = {}
+    completed_epochs = 0
+    epochs_without_improvement = 0
+    early_stopping_patience = int(
+        config["training"].get("early_stopping_patience", 0) or 0
+    )
+    early_stopping_min_delta = float(
+        config["training"].get("early_stopping_min_delta", 0.0)
+    )
 
     for epoch in range(1, total_epochs + 1):
+        completed_epochs = epoch
         start_time = time.time()
         train_loss = _run_epoch(
             model,
@@ -167,8 +178,17 @@ def train(config: dict, config_path: str | Path) -> None:
                 config=config,
                 epoch=epoch,
             )
-        if val_metrics["mae_c"] < best_val:
+        significant_improvement = (
+            val_metrics["mae_c"] < best_val - early_stopping_min_delta
+        )
+        improved = val_metrics["mae_c"] < best_val
+        if improved:
             best_val = val_metrics["mae_c"]
+            best_epoch = epoch
+            if significant_improvement:
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
             checkpoint_path = output_dir / "best.pt"
             torch.save(
                 {
@@ -184,11 +204,30 @@ def train(config: dict, config_path: str | Path) -> None:
                 {"best/epoch": epoch, "best/val_mae_c": best_val},
             )
             _wandb_save(wandb_run, checkpoint_path)
+        else:
+            epochs_without_improvement += 1
 
         final_val_metrics = val_metrics
+        if scheduler is not None:
+            scheduler.step()
+        _wandb_log(
+            wandb_run,
+            {"train/next_learning_rate": optimizer.param_groups[0]["lr"]},
+        )
+        if (
+            early_stopping_patience > 0
+            and epochs_without_improvement >= early_stopping_patience
+        ):
+            print(
+                f"early stopping at epoch {epoch:03d}; "
+                f"best_epoch={best_epoch:03d} best_val_mae_c={best_val:.3f}"
+            )
+            break
 
     final_metrics = {
         "best_val_mae_c": best_val,
+        "best_epoch": best_epoch,
+        "completed_epochs": completed_epochs,
         "final_val_loss": final_val_metrics.get("loss"),
         "final_val_mae_c": final_val_metrics.get("mae_c"),
         "final_val_rmse_c": final_val_metrics.get("rmse_c"),
@@ -202,6 +241,8 @@ def train(config: dict, config_path: str | Path) -> None:
         wandb_run,
         {
             "final/best_val_mae_c": final_metrics["best_val_mae_c"],
+            "final/best_epoch": final_metrics["best_epoch"],
+            "final/completed_epochs": final_metrics["completed_epochs"],
             "final/val_loss": final_metrics["final_val_loss"],
             "final/val_mae_c": final_metrics["final_val_mae_c"],
             "final/val_rmse_c": final_metrics["final_val_rmse_c"],
@@ -319,6 +360,19 @@ def _loss(pred, target, mask, loss_name: str):
     if loss_name == "huber":
         return masked_huber(pred, target, mask)
     raise ValueError(f"Unknown loss: {loss_name}")
+
+
+def _build_scheduler(optimizer, config: dict, total_epochs: int):
+    scheduler_name = config["training"].get("lr_scheduler", "none").lower()
+    if scheduler_name in ("", "none"):
+        return None
+    if scheduler_name == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=total_epochs,
+            eta_min=float(config["training"].get("min_learning_rate", 1e-5)),
+        )
+    raise ValueError(f"Unknown lr_scheduler: {scheduler_name}")
 
 
 def _resolve_device(device: str) -> torch.device:
