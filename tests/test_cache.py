@@ -73,3 +73,51 @@ def test_cached_dataset_reads_original_shape(tmp_path):
     batch = pad_collate([item], min_size=4, multiple=4)
     assert tuple(batch["x"].shape) == (1, 5, 4, 4)
     assert batch["phase"] == ["day"]
+
+
+def test_sample_cache_reads_original_shape(tmp_path):
+    cache_dir = tmp_path / "train"
+    sample_dir = cache_dir / "samples"
+    sample_dir.mkdir(parents=True)
+    np.savez(
+        sample_dir / "00000000.npz",
+        x=np.ones((5, 2, 3), dtype="float16"),
+        y=np.full((1, 2, 3), 2, dtype="float16"),
+        mask=np.ones((1, 2, 3), dtype="uint8"),
+    )
+    (cache_dir / "metadata.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "storage": "samples",
+                "split": "train",
+                "count": 1,
+                "dtype": "float16",
+                "channels": 5,
+                "height": 2,
+                "width": 3,
+                "records": [
+                    {
+                        "city": "Rome",
+                        "year": 2024,
+                        "month": 10,
+                        "day": 7,
+                        "temporal_resolution": "daily",
+                        "phase": "night",
+                        "height": 2,
+                        "width": 3,
+                        "file": "samples/00000000.npz",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    dataset = CachedLstatDataset(cache_dir)
+    item = dataset[0]
+    assert item["x"].shape == (5, 2, 3)
+    assert item["x"].dtype == np.float32
+    assert item["mask"].sum() == 6
+    assert item["phase"] == "night"

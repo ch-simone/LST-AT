@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 from pathlib import Path
+import shutil
 from typing import Iterable
 
 import numpy as np
@@ -13,6 +14,7 @@ from .index import SingleMapExample
 
 
 CACHE_VERSION = 1
+SAMPLE_DIR_NAME = "samples"
 
 
 class CachedLstatDataset:
@@ -24,9 +26,10 @@ class CachedLstatDataset:
 
         self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         self.records = self.metadata["records"]
-        self.x = np.load(self.cache_dir / "x.npy", mmap_mode="r")
-        self.y = np.load(self.cache_dir / "y.npy", mmap_mode="r")
-        self.mask = np.load(self.cache_dir / "mask.npy", mmap_mode="r")
+        self.storage = self.metadata.get("storage", "memmap")
+        self.x = None
+        self.y = None
+        self.mask = None
 
     def __len__(self) -> int:
         return len(self.records)
@@ -35,10 +38,11 @@ class CachedLstatDataset:
         record = self.records[index]
         height = int(record["height"])
         width = int(record["width"])
+        x, y, mask = self._load_item_arrays(index, record, height, width)
         return {
-            "x": np.array(self.x[index, :, :height, :width], dtype="float32"),
-            "y": np.array(self.y[index, :, :height, :width], dtype="float32"),
-            "mask": np.array(self.mask[index, :, :height, :width], dtype="float32"),
+            "x": x,
+            "y": y,
+            "mask": mask,
             "city": record["city"],
             "year": int(record["year"]),
             "month": int(record["month"]),
@@ -46,6 +50,43 @@ class CachedLstatDataset:
             "temporal_resolution": record["temporal_resolution"],
             "phase": record["phase"],
         }
+
+    def __getstate__(self) -> dict:
+        state = self.__dict__.copy()
+        state["x"] = None
+        state["y"] = None
+        state["mask"] = None
+        return state
+
+    def _load_item_arrays(
+        self,
+        index: int,
+        record: dict,
+        height: int,
+        width: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if self.storage == "samples":
+            sample_path = self.cache_dir / record["file"]
+            with np.load(sample_path) as data:
+                return (
+                    np.array(data["x"], dtype="float32"),
+                    np.array(data["y"], dtype="float32"),
+                    np.array(data["mask"], dtype="float32"),
+                )
+        if self.storage == "memmap":
+            self._ensure_memmaps_open()
+            return (
+                np.array(self.x[index, :, :height, :width], dtype="float32"),
+                np.array(self.y[index, :, :height, :width], dtype="float32"),
+                np.array(self.mask[index, :, :height, :width], dtype="float32"),
+            )
+        raise ValueError(f"Unknown cache storage: {self.storage}")
+
+    def _ensure_memmaps_open(self) -> None:
+        if self.x is None:
+            self.x = np.load(self.cache_dir / "x.npy", mmap_mode="r")
+            self.y = np.load(self.cache_dir / "y.npy", mmap_mode="r")
+            self.mask = np.load(self.cache_dir / "mask.npy", mmap_mode="r")
 
 
 def write_cache_split(
@@ -64,7 +105,11 @@ def write_cache_split(
             f"Cache split already exists: {cache_dir}. "
             "Use --overwrite to replace it."
         )
+    if cache_dir.exists() and overwrite:
+        shutil.rmtree(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
+    sample_dir = cache_dir / SAMPLE_DIR_NAME
+    sample_dir.mkdir()
 
     shapes = _scan_shapes(examples, progress_interval=progress_interval)
     max_height = max(height for height, _ in shapes) if shapes else 0
@@ -72,35 +117,17 @@ def write_cache_split(
     channels = dataset[0]["x"].shape[0] if examples else 0
     count = len(examples)
 
-    x = np.lib.format.open_memmap(
-        cache_dir / "x.npy",
-        mode="w+",
-        dtype=np.dtype(dtype),
-        shape=(count, channels, max_height, max_width),
-    )
-    y = np.lib.format.open_memmap(
-        cache_dir / "y.npy",
-        mode="w+",
-        dtype=np.dtype(dtype),
-        shape=(count, 1, max_height, max_width),
-    )
-    mask = np.lib.format.open_memmap(
-        cache_dir / "mask.npy",
-        mode="w+",
-        dtype=np.uint8,
-        shape=(count, 1, max_height, max_width),
-    )
-    x[:] = 0
-    y[:] = 0
-    mask[:] = 0
-
     records = []
     for index in range(count):
         item = dataset[index]
         height, width = item["x"].shape[-2:]
-        x[index, :, :height, :width] = item["x"].astype(dtype, copy=False)
-        y[index, :, :height, :width] = item["y"].astype(dtype, copy=False)
-        mask[index, :, :height, :width] = item["mask"].astype("uint8", copy=False)
+        filename = f"{index:08d}.npz"
+        np.savez(
+            sample_dir / filename,
+            x=item["x"].astype(dtype, copy=False),
+            y=item["y"].astype(dtype, copy=False),
+            mask=item["mask"].astype("uint8", copy=False),
+        )
         records.append(
             {
                 "city": item["city"],
@@ -111,6 +138,7 @@ def write_cache_split(
                 "phase": item["phase"],
                 "height": int(height),
                 "width": int(width),
+                "file": f"{SAMPLE_DIR_NAME}/{filename}",
                 "source": _example_to_jsonable(examples[index]),
             }
         )
@@ -123,11 +151,9 @@ def write_cache_split(
                 flush=True,
             )
 
-    x.flush()
-    y.flush()
-    mask.flush()
     metadata = {
         "version": CACHE_VERSION,
+        "storage": "samples",
         "split": split,
         "count": count,
         "dtype": dtype,

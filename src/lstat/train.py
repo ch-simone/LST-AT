@@ -99,8 +99,8 @@ def train(config: dict, config_path: str | Path) -> None:
     ).to(device)
     wandb_run = _init_wandb(
         config=config,
-        train_examples=len(train_examples),
-        val_examples=len(val_examples),
+        train_examples=len(train_ds),
+        val_examples=len(val_ds),
         device=str(device),
         model=model,
     )
